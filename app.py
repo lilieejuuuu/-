@@ -52,7 +52,6 @@ current_y = date.today().year
 
 for i in range(7):
     m = (start_month + i - 1) % 12 + 1
-    # 判斷年份是否跨年
     y = current_y if (start_month + i <= 12) else current_y + 1
     months_to_input.append({"month": m, "year": y, "symbol": num_symbols[i]})
 
@@ -68,7 +67,7 @@ for item in months_to_input:
     
     month_inputs[m] = st.text_input(
         label,
-        placeholder=f"請貼上 {m} 月 1~31 號稼动率 (以空格或 Tab 分割)...",
+        placeholder=f"請貼上 {m} 月 1~31 號稼動率 (以空格或 Tab 分割)...",
         key=f"input_{m}"
     )
 
@@ -79,12 +78,47 @@ st.subheader("A. 昨日數據")
 uploaded_history = st.file_uploader("【上傳 CSV 檔案】", type=["csv"], label_visibility="collapsed")
 
 yesterday_prices = {}
+latest_detected_update = ""
+
 if uploaded_history is not None:
     try:
         y_df = pd.read_csv(uploaded_history)
+        
+        # 1. 整理日期與金額欄位
+        valid_rows = []
         for idx, row in y_df.iterrows():
-            yesterday_prices[str(row["日期"]).strip()] = int(row["區間金額"])
-        st.success("✅ 已成功載入昨日數據！")
+            d_val = str(row.get("日期", "")).strip()
+            p_val = row.get("區間金額")
+            u_date = str(row.get("更新日", "")).strip()
+            
+            if d_val and d_val != "nan" and pd.notnull(p_val):
+                # 簡化日期格式 (例如 2026/7/1 -> 7/1)
+                if "/" in d_val:
+                    parts = d_val.split("/")
+                    clean_d = f"{int(parts[1])}/{int(parts[2])}" if len(parts) == 3 else f"{int(parts[0])}/{int(parts[1])}"
+                else:
+                    clean_d = d_val
+                
+                valid_rows.append({
+                    "更新日": u_date,
+                    "目標日期": clean_d,
+                    "區間金額": int(float(p_val))
+                })
+        
+        # 2. 如果有有效數據，抓出「最新一個更新日」的資料
+        if valid_rows:
+            v_df = pd.DataFrame(valid_rows)
+            # 取最後出現的更新日（代表最新的紀錄，如 7/21）
+            latest_detected_update = v_df["更新日"].iloc[-1]
+            latest_df = v_df[v_df["更新日"] == latest_detected_update]
+            
+            for idx, row in latest_df.iterrows():
+                yesterday_prices[row["目標日期"]] = row["區間金額"]
+                
+            st.success(f"✅ 系統已自動辨認並抓取最新歷史紀錄（更新日：{latest_detected_update}），共 {len(yesterday_prices)} 筆！")
+        else:
+            st.warning("⚠️ 上傳的 CSV 檔中未包含已計算的「區間金額」數據。")
+            
     except Exception as e:
         st.error(f"昨日 CSV 讀取失敗：{e}")
 
@@ -107,7 +141,12 @@ for item in months_to_input:
             date_key = f"{m}/{day}"
 
             # 記錄今日資料
-            today_records.append({"日期": date_key, "稼動率": util_val, "區間金額": price})
+            today_records.append({
+                "更新日": update_date_input,
+                "日期": date_key,
+                "稼動率": util_val,
+                "區間金額": price
+            })
 
             # 比對昨日價格
             if date_key in yesterday_prices:
