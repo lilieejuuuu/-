@@ -84,7 +84,7 @@ if uploaded_history is not None:
     try:
         y_df = pd.read_csv(uploaded_history)
         
-        # 1. 整理日期與金額欄位
+        # 整理日期與金額欄位
         valid_rows = []
         for idx, row in y_df.iterrows():
             d_val = str(row.get("日期", "")).strip()
@@ -92,7 +92,6 @@ if uploaded_history is not None:
             u_date = str(row.get("更新日", "")).strip()
             
             if d_val and d_val != "nan" and pd.notnull(p_val):
-                # 簡化日期格式 (例如 2026/7/1 -> 7/1)
                 if "/" in d_val:
                     parts = d_val.split("/")
                     clean_d = f"{int(parts[1])}/{int(parts[2])}" if len(parts) == 3 else f"{int(parts[0])}/{int(parts[1])}"
@@ -105,17 +104,15 @@ if uploaded_history is not None:
                     "區間金額": int(float(p_val))
                 })
         
-        # 2. 如果有有效數據，抓出「最新一個更新日」的資料
         if valid_rows:
             v_df = pd.DataFrame(valid_rows)
-            # 取最後出現的更新日（代表最新的紀錄，如 7/21）
             latest_detected_update = v_df["更新日"].iloc[-1]
             latest_df = v_df[v_df["更新日"] == latest_detected_update]
             
             for idx, row in latest_df.iterrows():
                 yesterday_prices[row["目標日期"]] = row["區間金額"]
                 
-            st.success(f"✅ 系統已自動辨認並抓取最新歷史紀錄（更新日：{latest_detected_update}），共 {len(yesterday_prices)} 筆！")
+            st.success(f"✅ 已載入歷史紀錄（更新日：{latest_detected_update}），共 {len(yesterday_prices)} 筆！")
         else:
             st.warning("⚠️ 上傳的 CSV 檔中未包含已計算的「區間金額」數據。")
             
@@ -154,7 +151,8 @@ for item in months_to_input:
                 if price != old_p:
                     changed_results.append({
                         "變動日期": date_key,
-                        "新金額": price
+                        "新金額": price,
+                        "變動提醒": "⚠️ 料金有變動"
                     })
 
 st.write("---")
@@ -162,14 +160,22 @@ st.subheader("B. 昨日對比有變動日期及金額")
 
 if changed_results:
     res_df = pd.DataFrame(changed_results)
-    st.table(res_df)
+    st.dataframe(
+        res_df,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "新金額": st.column_config.NumberColumn("新金額", format="%d"),
+            "變動提醒": st.column_config.TextColumn("變動提醒")
+        }
+    )
 else:
     if uploaded_history is not None and len(today_records) > 0:
         st.success("✅ 所有日期料金與昨日相比完全相同，無變動！")
     else:
         st.info("💡 請貼上稼動率數據並上傳昨日 CSV 檔進行比對。")
 
-# --- 6. 匯出今天 CSV 備份 (供明天 A 區使用) ---
+# --- 6. 匯出今天 CSV 備份 ---
 if today_records:
     st.write("---")
     export_df = pd.DataFrame(today_records)
