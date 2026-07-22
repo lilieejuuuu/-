@@ -1,21 +1,14 @@
-from datetime import date, timedelta
+from datetime import date
 import re
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="每日稼動率與料金歷史比對系統", page_icon="📊", layout="wide")
+st.set_page_config(page_title="稼動率料金變動比對系統", page_icon="📋", layout="centered")
 
-st.title("📊 每日稼動率與料金歷史比對系統")
-st.caption("支援批次貼上整月稼動率，自動比對「今日更新」與「昨日更新」之料金差異。")
+st.title("📋 稼動率料金變動比對系統")
 
-st.write("---")
-
-# --- 1. 計算淡旺季與料金的函式 ---
-def calculate_price(target_date, util):
-    month = target_date.month
-    day = target_date.day
-    
-    # 淡季判斷
+# --- 1. 淡旺季與料金計算邏輯 ---
+def calculate_price(month, day, util):
     is_low_season = False
     if month in [1, 2, 6, 9]:
         is_low_season = True
@@ -25,8 +18,7 @@ def calculate_price(target_date, util):
         is_low_season = True
     elif month == 12 and 1 <= day <= 15:
         is_low_season = True
-        
-    # 計算料金
+
     if is_low_season:
         if util <= 30: return 11000
         elif util <= 50: return 12000
@@ -41,105 +33,112 @@ def calculate_price(target_date, util):
         elif util <= 85: return 14525
         else: return 17500
 
-# --- 2. 輸入設定區 ---
-st.subheader("📝 1. 輸入今日更新設定")
+DAYS_IN_MONTH = {1:31, 2:28, 3:31, 4:30, 5:31, 6:30, 7:31, 8:31, 9:30, 10:31, 11:30, 12:31}
 
-col1, col2, col3 = st.columns(3)
+# --- 2. ① 今天更新日期 ---
+st.subheader("① 今天更新日期")
+update_date_input = st.text_input("更新日期 (格式如 7/22 或 8/1)", value=f"{date.today().month}/{date.today().day}")
 
-with col1:
-    update_date_str = st.text_input("今日更新日 (例如: 7/21)", value=f"{date.today().month}/{date.today().day}")
+# 解析更新日期中的「月份」與「年份」
+try:
+    start_month = int(update_date_input.split("/")[0])
+except:
+    start_month = date.today().month
 
-with col2:
-    start_date = st.date_input("本批資料的第 1 天日期 (例如: 2026/7/1)", value=date(2026, 7, 1))
+# 動態推算未來 7 個月的月份與對應年份
+num_symbols = ["②", "③", "④", "⑤", "⑥", "⑦", "⑧"]
+months_to_input = []
+current_y = date.today().year
 
-with col3:
-    st.write(" ") # 留空對齊
+for i in range(7):
+    m = (start_month + i - 1) % 12 + 1
+    # 判斷年份是否跨年
+    y = current_y if (start_month + i <= 12) else current_y + 1
+    months_to_input.append({"month": m, "year": y, "symbol": num_symbols[i]})
 
-# 文字貼上區
-pasted_text = st.text_area(
-    "請複製並貼上 Staysee 該列數據 (1號~31號的數字串)：",
-    placeholder="例如: 21.6 43.1 44.3 52.7 71.3 82 33.5 23.4 50.9 91.6 ...",
-    height=120
-)
-
-# 上傳 yesterday 紀錄檔 (選填，比對用)
 st.write("---")
-st.subheader("📂 2. 上傳昨日的歷史紀錄 (比對用)")
-uploaded_history = st.file_uploader("若要比對與昨天的差異，請上傳昨天匯出的 CSV 紀錄檔：", type=["csv"])
 
-# 處理昨日資料數據庫
-yesterday_dict = {} # key: 'YYYY-MM-DD', value: price
+# --- 3. ②~⑧ 自動推算未來 7 個月稼動率輸入欄位 ---
+month_inputs = {}
+
+for item in months_to_input:
+    m = item["month"]
+    sym = item["symbol"]
+    label = f"{sym} {m}月稼動率"
+    
+    month_inputs[m] = st.text_input(
+        label,
+        placeholder=f"請貼上 {m} 月 1~31 號稼动率 (以空格或 Tab 分割)...",
+        key=f"input_{m}"
+    )
+
+st.write("---")
+
+# --- 4. A. 昨日數據 (上傳 CSV 檔案) ---
+st.subheader("A. 昨日數據")
+uploaded_history = st.file_uploader("【上傳 CSV 檔案】", type=["csv"], label_visibility="collapsed")
+
+yesterday_prices = {}
 if uploaded_history is not None:
     try:
         y_df = pd.read_csv(uploaded_history)
-        # 建立歷史價格對照表 (取最近一次記錄)
         for idx, row in y_df.iterrows():
-            d_str = str(row['日期']).strip()
-            p_val = int(row['區間金額'])
-            yesterday_dict[d_str] = p_val
-        st.success(f"✅ 成功載入昨日歷史資料，共 {len(yesterday_dict)} 筆！")
+            yesterday_prices[str(row["日期"]).strip()] = int(row["區間金額"])
+        st.success("✅ 已成功載入昨日數據！")
     except Exception as e:
-        st.error(f"昨日紀錄讀取失敗: {e}")
+        st.error(f"昨日 CSV 讀取失敗：{e}")
 
-# --- 3. 處理與計算今日數據 ---
-if pasted_text.strip():
-    # 正規化解析出所有浮點數
-    raw_numbers = re.findall(r"\d+\.?\d*", pasted_text)
-    
-    if raw_numbers:
-        table_data = []
-        
-        for i, num_str in enumerate(raw_numbers):
-            try:
-                util_val = float(num_str)
-                # 自動累加日期
-                current_date = start_date + timedelta(days=i)
-                date_str = current_date.strftime("%Y/%n/%d").replace("/0", "/") # 格式化如 2026/7/1
-                date_iso = current_date.strftime("%Y-%m-%d")
-                
-                # 計算今日金額
-                today_price = calculate_price(current_date, util_val)
-                
-                # 比對昨日金額
-                diff_note = ""
-                yesterday_price = yesterday_dict.get(date_str) or yesterday_dict.get(date_iso)
-                
-                if yesterday_price is not None:
-                    if today_price != yesterday_price:
-                        diff_note = f"🔥 變動！原為 {yesterday_price}"
-                
-                table_data.append({
-                    "更新日": update_date_str,
-                    "日期": date_str,
-                    "稼動率": util_val,
-                    "區間金額": today_price,
-                    "變動提醒": diff_note
-                })
-            except ValueError:
-                continue
-        
-        # 轉換成 Pandas DataFrame 呈現
-        res_df = pd.DataFrame(table_data)
-        
-        st.write("---")
-        st.subheader("📋 3. 今日產生之對照表")
-        
-        # 顯示整張大表格
-        st.dataframe(
-            res_df,
-            use_container_width=True,
-            column_config={
-                "區間金額": st.column_config.NumberColumn("區間金額", format="%d円"),
-                "稼動率": st.column_config.NumberColumn("稼動率", format="%.1f%%"),
-            },
-            hide_index=True
-        )
-        
-        # 提供下載 CSV 按鈕 (供明天上傳比對)
-        csv_data = res_df.to_csv(index=False).encode('utf-8-sig')
-        st.download_button(
-            label="💾 下載今日報表 CSV (請保存此檔案，供明日比對上傳)",
-            data=csv_data,
-            file_name=f"料金紀錄_{update_date_str.replace('/', '_')}.csv",
-            mime="text/csv"
-        )
+# --- 5. 運算與 B. 昨日對比有變動日期及金額 ---
+today_records = []
+changed_results = []
+
+for item in months_to_input:
+    m = item["month"]
+    text = month_inputs[m].strip()
+    if text:
+        nums = re.findall(r"\d+\.?\d*", text)
+        for idx, num_str in enumerate(nums):
+            day = idx + 1
+            if day > DAYS_IN_MONTH[m]:
+                break
+
+            util_val = float(num_str)
+            price = calculate_price(m, day, util_val)
+            date_key = f"{m}/{day}"
+
+            # 記錄今日資料
+            today_records.append({"日期": date_key, "稼動率": util_val, "區間金額": price})
+
+            # 比對昨日價格
+            if date_key in yesterday_prices:
+                old_p = yesterday_prices[date_key]
+                if price != old_p:
+                    changed_results.append({
+                        "變動日期": date_key,
+                        "新金額": price
+                    })
+
+st.write("---")
+st.subheader("B. 昨日對比有變動日期及金額")
+
+if changed_results:
+    res_df = pd.DataFrame(changed_results)
+    st.table(res_df)
+else:
+    if uploaded_history is not None and len(today_records) > 0:
+        st.success("✅ 所有日期料金與昨日相比完全相同，無變動！")
+    else:
+        st.info("💡 請貼上稼動率數據並上傳昨日 CSV 檔進行比對。")
+
+# --- 6. 匯出今天 CSV 備份 (供明天 A 區使用) ---
+if today_records:
+    st.write("---")
+    export_df = pd.DataFrame(today_records)
+    csv_bytes = export_df.to_csv(index=False).encode("utf-8-sig")
+    st.download_button(
+        label="💾 下載今日紀錄 CSV (明天拖進「A. 昨日數據」使用)",
+        data=csv_bytes,
+        file_name=f"料金紀錄_{update_date_input.replace('/', '_')}.csv",
+        mime="text/csv",
+        type="primary"
+    )
