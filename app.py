@@ -37,20 +37,24 @@ DAYS_IN_MONTH = {1:31, 2:28, 3:31, 4:30, 5:31, 6:30, 7:31, 8:31, 9:30, 10:31, 11
 st.subheader("① 今天更新日期")
 update_date_input = st.text_input("更新日期 (格式如 7/22 或 8/1)", value=f"{date.today().month}/{date.today().day}")
 
-# 解析更新日期中的「月份」與「年份」
+# 解析今天更新日期的「月份」、「日期」與「年份」
 try:
-    start_month = int(update_date_input.split("/")[0])
+    parts = update_date_input.split("/")
+    cur_m = int(parts[0])
+    cur_d = int(parts[1])
 except:
-    start_month = date.today().month
+    cur_m = date.today().month
+    cur_d = date.today().day
+
+current_y = date.today().year
 
 # 動態推算未來 7 個月的月份與對應年份
 num_symbols = ["②", "③", "④", "⑤", "⑥", "⑦", "⑧"]
 months_to_input = []
-current_y = date.today().year
 
 for i in range(7):
-    m = (start_month + i - 1) % 12 + 1
-    y = current_y if (start_month + i <= 12) else current_y + 1
+    m = (cur_m + i - 1) % 12 + 1
+    y = current_y if (cur_m + i <= 12) else current_y + 1
     months_to_input.append({"month": m, "year": y, "symbol": num_symbols[i]})
 
 st.write("---")
@@ -95,11 +99,11 @@ if uploaded_history is not None:
             if d_val and d_val != "nan" and pd.notnull(p_val):
                 d_val_clean = d_val.replace("月", "/").replace("日", "")
                 if "/" in d_val_clean:
-                    parts = [p for p in d_val_clean.split("/") if p]
-                    if len(parts) == 3:
-                        clean_d = f"{int(parts[1])}/{int(parts[2])}"
-                    elif len(parts) == 2:
-                        clean_d = f"{int(parts[0])}/{int(parts[1])}"
+                    p_split = [p for p in d_val_clean.split("/") if p]
+                    if len(p_split) == 3:
+                        clean_d = f"{int(p_split[1])}/{int(p_split[2])}"
+                    elif len(p_split) == 2:
+                        clean_d = f"{int(p_split[0])}/{int(p_split[1])}"
                     else:
                         clean_d = d_val_clean
                 else:
@@ -129,7 +133,7 @@ if uploaded_history is not None:
     except Exception as e:
         st.error(f"昨日 CSV 讀取失敗：{e}")
 
-# --- 5. 運算與 B. 昨日對比有變動日期及金額 ---
+# --- 5. 運算與 B. 昨日對比有變動日期及金額 (過濾過去日期) ---
 today_records = []
 changed_results = []
 
@@ -142,6 +146,10 @@ for item in months_to_input:
             day = idx + 1
             if day > DAYS_IN_MONTH[m]:
                 break
+
+            # 🛡️【過濾過去日期】僅保留等於或晚於今天更新日的日期
+            if m == cur_m and day < cur_d:
+                continue
 
             util_val = float(num_str)
             price = calculate_price(m, day, util_val)
