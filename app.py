@@ -82,27 +82,44 @@ latest_detected_update = ""
 
 if uploaded_history is not None:
     try:
-        y_df = pd.read_csv(uploaded_history)
+        # 使用 utf-8-sig 自動兼容中文編碼，或用預設讀取
+        try:
+            y_df = pd.read_csv(uploaded_history, encoding="utf-8-sig")
+        except:
+            uploaded_history.seek(0)
+            y_df = pd.read_csv(uploaded_history)
         
-        # 整理日期與金額欄位
         valid_rows = []
+        cols = y_df.columns
+        
         for idx, row in y_df.iterrows():
-            d_val = str(row.get("日期", "")).strip()
-            p_val = row.get("區間金額")
-            u_date = str(row.get("更新日", "")).strip()
+            # 先試著拿標題，若標題亂碼就改拿第 0, 1, 3 欄
+            u_date = str(row.get("更新日", row.iloc[0] if len(row) > 0 else "")).strip()
+            d_val  = str(row.get("日期", row.iloc[1] if len(row) > 1 else "")).strip()
+            p_val  = row.get("區間金額", row.iloc[3] if len(row) > 3 else None)
             
             if d_val and d_val != "nan" and pd.notnull(p_val):
-                if "/" in d_val:
-                    parts = d_val.split("/")
-                    clean_d = f"{int(parts[1])}/{int(parts[2])}" if len(parts) == 3 else f"{int(parts[0])}/{int(parts[1])}"
+                # 整理日期格式 (2026/7/1 -> 7/1 或 7月1日 -> 7/1)
+                d_val_clean = d_val.replace("月", "/").replace("日", "")
+                if "/" in d_val_clean:
+                    parts = [p for p in d_val_clean.split("/") if p]
+                    if len(parts) == 3:
+                        clean_d = f"{int(parts[1])}/{int(parts[2])}"
+                    elif len(parts) == 2:
+                        clean_d = f"{int(parts[0])}/{int(parts[1])}"
+                    else:
+                        clean_d = d_val_clean
                 else:
-                    clean_d = d_val
+                    clean_d = d_val_clean
                 
-                valid_rows.append({
-                    "更新日": u_date,
-                    "目標日期": clean_d,
-                    "區間金額": int(float(p_val))
-                })
+                try:
+                    valid_rows.append({
+                        "更新日": u_date,
+                        "目標日期": clean_d,
+                        "區間金額": int(float(p_val))
+                    })
+                except ValueError:
+                    continue
         
         if valid_rows:
             v_df = pd.DataFrame(valid_rows)
@@ -114,7 +131,7 @@ if uploaded_history is not None:
                 
             st.success(f"✅ 已載入歷史紀錄（更新日：{latest_detected_update}），共 {len(yesterday_prices)} 筆！")
         else:
-            st.warning("⚠️ 上傳的 CSV 檔中未包含已計算的「區間金額」數據。")
+            st.warning("⚠️ 上傳的 CSV 檔中未包含有效的「區間金額」數據。")
             
     except Exception as e:
         st.error(f"昨日 CSV 讀取失敗：{e}")
@@ -179,6 +196,7 @@ else:
 if today_records:
     st.write("---")
     export_df = pd.DataFrame(today_records)
+    # 使用 utf-8-sig 輸出，確保 Excel 開啟時中文標題不會變亂碼
     csv_bytes = export_df.to_csv(index=False).encode("utf-8-sig")
     st.download_button(
         label="💾 下載今日紀錄 CSV (明天拖進「A. 昨日數據」使用)",
