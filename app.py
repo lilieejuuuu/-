@@ -159,8 +159,9 @@ for item in months_to_input:
                 old_p = yesterday_prices[date_key]
                 if price != old_p:
                     changed_results.append({
-                        "變動日期": date_key,
-                        "變動金額": f"料金變動:{price}円"
+                        "日期": date_key,
+                        "最新金額": price,
+                        "變動通知": "🔥 變動！"
                     })
 
 st.write("---")
@@ -173,8 +174,9 @@ if changed_results:
         use_container_width=True,
         hide_index=True,
         column_config={
-            "變動日期": st.column_config.TextColumn("變動日期"),
-            "變動金額": st.column_config.TextColumn("變動金額")
+            "日期": st.column_config.TextColumn("日期"),
+            "最新金額": st.column_config.NumberColumn("最新金額", format="%d"),
+            "變動通知": st.column_config.TextColumn("變動通知")
         }
     )
 else:
